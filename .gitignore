@@ -1,0 +1,11 @@
+@"
+.venv/
+.idea/
+__pycache__/
+*.py[cod]
+*.log
+.env
+.env.*
+.pytest_cache/
+.coverage
+"@ | Set-Content .gitignore

@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Symulator rozchodzenia się światła w butelce</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <div class="app">
+    <div class="top-toolbar">
+      <form id="params-form">
+        <div class="toolbar-title" title="Śledzenie promieni świetlnych przez okrągły przekrój butelki">
+          <button type="button" id="toggle-hud-btn" aria-expanded="true">Ukryj ustawienia</button>
+          <h1>Symulator rozchodzenia się światła w butelce</h1>
+        </div>
+
+        <div id="hud-settings" class="hud-settings">
+        <fieldset class="toolbar-section">
+          <legend>Geometria butelki</legend>
+          <label class="control-row">
+            Promień zewn. [mm]
+            <input type="number" id="outer_radius_mm" name="outer_radius_mm" value="35" min="1" step="0.5">
+          </label>
+          <label class="control-row">
+            Grubość ścianki [mm]
+            <input type="number" id="wall_thickness_mm" name="wall_thickness_mm" value="3" min="0.1" step="0.1">
+          </label>
+        </fieldset>
+
+        <fieldset class="toolbar-section">
+          <legend>Współczynniki załamania (n)</legend>
+          <label class="control-row">
+            Otoczenie
+            <input type="number" id="n_outside" name="n_outside" value="1.0003" min="1" step="0.0001">
+          </label>
+          <label class="control-row">
+            Szkło
+            <input type="number" id="n_glass" name="n_glass" value="1.52" min="1" step="0.01">
+          </label>
+          <label class="control-row">
+            Wnętrze
+            <input type="number" id="n_inside" name="n_inside" value="1.0003" min="1" step="0.001">
+          </label>
+        </fieldset>
+
+        <fieldset class="toolbar-section">
+          <legend>Źródło światła</legend>
+          <div class="mode-toggle">
+            <label class="radio-label">
+              <input type="radio" name="mode" value="parallel">
+              Równoległa
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="mode" value="point" checked>
+              Punktowe
+            </label>
+          </div>
+
+          <div id="mode-point-position-fields" class="mode-fields">
+            <label class="control-row">
+              Pozycja X [mm]
+              <input type="number" id="source_x_mm" name="source_x_mm" value="-170" step="1">
+            </label>
+            <label class="control-row">
+              Pozycja Y [mm]
+              <input type="number" id="source_y_mm" name="source_y_mm" value="0" step="1">
+            </label>
+            <span class="hint">(albo przeciągnij punkt na rysunku)</span>
+
+            <label class="checkbox-label">
+              <input type="checkbox" id="angle_link_center">
+              Powiąż kierunek ze środkiem
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset class="toolbar-section">
+          <legend>Wiązka</legend>
+          <label class="control-row">
+            Gęstość promieni <span class="hint" id="ray_count_readout">13</span>
+            <input type="number" id="ray_count" name="ray_count" value="13" min="1" max="2000" step="1" class="density-number">
+          </label>
+          <input type="range" id="ray_count_slider" min="1" max="400" step="1" value="13">
+
+          <div id="mode-parallel-fields" class="mode-fields hidden">
+            <label class="control-row">
+              Kąt padania [°]
+              <input type="number" id="beam_angle_deg" name="beam_angle_deg" value="0" step="1">
+            </label>
+            <label class="control-row">
+              Poł. wys. wiązki [mm]
+              <input type="number" id="beam_half_height_mm" name="beam_half_height_mm" placeholder="auto" min="0" step="0.5">
+            </label>
+          </div>
+
+          <div id="mode-point-fields" class="mode-fields">
+            <label id="point_beam_angle_field" class="control-row">
+              Kąt wiązki (stały) [°]
+              <input type="number" id="point_beam_angle_deg" name="point_beam_angle_deg" value="0" step="1">
+            </label>
+
+            <label id="aim_offset_field" class="control-row hidden">
+              Odchylenie od środka [°]
+              <input type="number" id="aim_offset_deg" name="aim_offset_deg" value="0" step="1">
+            </label>
+
+            <label class="control-row">
+              Kąt rozwarcia [°]
+              <input type="number" id="beam_spread_deg" name="beam_spread_deg" value="20" min="0" max="180" step="1">
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset class="toolbar-section">
+          <legend>Soczewka</legend>
+          <label class="checkbox-label">
+            <input type="checkbox" id="lens_enabled" checked>
+            Pokaż soczewkę
+          </label>
+
+          <div id="lens-fields" class="mode-fields">
+            <label class="control-row">
+              Pozycja X [mm]
+              <input type="number" id="lens_center_x_mm" name="lens_center_x_mm" value="-100" step="1">
+            </label>
+            <label class="control-row">
+              Pozycja Y [mm]
+              <input type="number" id="lens_center_y_mm" name="lens_center_y_mm" value="0" step="1">
+            </label>
+            <label class="control-row">
+              Średnica [mm]
+              <input type="number" id="lens_diameter_mm" name="lens_diameter_mm" value="40" min="1" step="1">
+            </label>
+            <label class="control-row">
+              n soczewki
+              <input type="number" id="lens_refractive_index" name="lens_refractive_index" value="1.5" min="1" step="0.01">
+            </label>
+            <span class="hint">(albo przeciągnij środek na rysunku)</span>
+          </div>
+        </fieldset>
+
+        <fieldset class="toolbar-section">
+          <legend>Widok</legend>
+          <label class="checkbox-label">
+            <input type="checkbox" id="show_grid" checked>
+            Pokaż kratkę
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="show_dimensions">
+            Pokaż wymiary
+          </label>
+          <button type="button" id="toggle-reflected-btn" aria-pressed="false">
+            Pokaż promienie odbite
+          </button>
+          <button type="button" id="open-export-btn">
+            Eksport / wydruk 1:1
+          </button>
+        </fieldset>
+
+        <details class="toolbar-section">
+          <summary>Kolory</summary>
+          <label class="control-row">
+            Butelka
+            <input type="color" id="color_bottle">
+          </label>
+          <label class="control-row">
+            Soczewka
+            <input type="color" id="color_lens">
+          </label>
+          <label class="control-row">
+            Padające
+            <input type="color" id="color_incident">
+          </label>
+          <label class="control-row">
+            Załamane
+            <input type="color" id="color_refracted">
+          </label>
+          <label class="control-row">
+            Odbite
+            <input type="color" id="color_reflected">
+          </label>
+          <label class="control-row">
+            Kratka
+            <input type="color" id="color_grid">
+          </label>
+          <button type="button" id="reset-colors-btn">Przywróć kolory domyślne</button>
+        </details>
+        </div>
+      </form>
+    </div>
+
+    <main class="simulation-container">
+      <canvas id="scene"></canvas>
+      <div id="grid-note" class="grid-note">Mała kratka = 10 mm, gruba linia = 100 mm</div>
+      <div id="status" class="status"></div>
+
+      <aside id="scene-inspector" class="scene-inspector">
+        <div class="inspector-header">
+          <span>Dane sceny</span>
+          <button type="button" id="toggle-inspector-btn">Ukryj dane</button>
+        </div>
+        <div id="inspector-body" class="inspector-body">
+          <div class="inspector-group">
+            <div class="inspector-title">Butelka</div>
+            <div class="inspector-row"><span>Środek X</span><span id="insp-bottle-x"></span></div>
+            <div class="inspector-row"><span>Środek Y</span><span id="insp-bottle-y"></span></div>
+            <div class="inspector-row"><span>Śr. zewnętrzna</span><span id="insp-bottle-outer"></span></div>
+            <div class="inspector-row"><span>Śr. wewnętrzna</span><span id="insp-bottle-inner"></span></div>
+          </div>
+          <div class="inspector-group">
+            <div class="inspector-title">Soczewka</div>
+            <div class="inspector-row"><span>Środek X</span><span id="insp-lens-x"></span></div>
+            <div class="inspector-row"><span>Środek Y</span><span id="insp-lens-y"></span></div>
+            <div class="inspector-row"><span>Średnica</span><span id="insp-lens-d"></span></div>
+            <div class="inspector-row"><span>n</span><span id="insp-lens-n"></span></div>
+          </div>
+          <div class="inspector-group">
+            <div class="inspector-title">Źródło światła</div>
+            <div class="inspector-row"><span>Pozycja X</span><span id="insp-source-x"></span></div>
+            <div class="inspector-row"><span>Pozycja Y</span><span id="insp-source-y"></span></div>
+            <div class="inspector-row"><span>Odl. od środka</span><span id="insp-source-dist"></span></div>
+          </div>
+          <div class="inspector-group">
+            <div class="inspector-title">Wiązka</div>
+            <div class="inspector-row"><span>Kierunek</span><span id="insp-beam-angle"></span></div>
+            <div class="inspector-row"><span>Rozwarcie</span><span id="insp-beam-spread"></span></div>
+            <div class="inspector-row"><span>Tryb</span><span id="insp-beam-mode"></span></div>
+            <div class="inspector-row"><span>Promienie</span><span id="insp-ray-count"></span></div>
+          </div>
+          <div class="inspector-group">
+            <div class="inspector-title">Odległości</div>
+            <div class="inspector-row"><span>Źródło–soczewka</span><span id="insp-dist-source-lens"></span></div>
+            <div class="inspector-row"><span>Soczewka–butelka</span><span id="insp-dist-lens-bottle"></span></div>
+            <div class="inspector-row"><span>Kąt źródło–środek</span><span id="insp-angle-source-center"></span></div>
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <dialog id="export-dialog" class="export-dialog">
+      <form method="dialog" id="export-form">
+        <h2>Eksport / wydruk 1:1</h2>
+
+        <label class="control-row">
+          Format strony
+          <select id="export_page_size">
+            <option value="A4">A4</option>
+            <option value="A3">A3</option>
+          </select>
+        </label>
+        <label class="control-row">
+          Orientacja
+          <select id="export_orientation">
+            <option value="landscape">Pozioma</option>
+            <option value="portrait">Pionowa</option>
+          </select>
+        </label>
+        <label class="control-row">
+          Skala
+          <select id="export_scale">
+            <option value="1" selected>1:1</option>
+            <option value="0.5">1:2</option>
+            <option value="2">2:1</option>
+          </select>
+        </label>
+        <label class="control-row">
+          Punkt odniesienia
+          <select id="export_reference">
+            <option value="center">Środek butelki na środku strony</option>
+            <option value="custom">Środek butelki w wybranym miejscu</option>
+            <option value="autofit">Auto (bez zmiany skali)</option>
+          </select>
+        </label>
+        <div id="export-custom-position" class="mode-fields hidden">
+          <label class="control-row">
+            Poz. X na stronie [mm]
+            <input type="number" id="export_pos_x_mm" value="148" step="1">
+          </label>
+          <label class="control-row">
+            Poz. Y na stronie [mm]
+            <input type="number" id="export_pos_y_mm" value="105" step="1">
+          </label>
+        </div>
+
+        <label class="checkbox-label">
+          <input type="checkbox" id="export_show_grid" checked>
+          Pokaż kratkę
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="export_show_rays" checked>
+          Pokaż promienie
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="export_show_dimensions">
+          Pokaż wymiary
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="export_show_colors" checked>
+          Wydruk kolorowy <span class="hint">(odznacz = czarno-biały)</span>
+        </label>
+
+        <div id="export-warning" class="export-warning hidden"></div>
+
+        <div class="export-actions">
+          <button type="button" id="export-download-btn">Pobierz SVG</button>
+          <button type="button" id="export-oversize-btn" class="hidden">Eksportuj całą scenę (dopasowany rozmiar)</button>
+          <button type="button" id="export-print-view-btn">Otwórz widok wydruku</button>
+          <button type="submit" id="export-close-btn">Zamknij</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="print-view" class="print-view hidden">
+      <div class="print-view-toolbar">
+        <button type="button" id="print-now-btn">Drukuj</button>
+        <button type="button" id="print-close-btn">Zamknij widok wydruku</button>
+      </div>
+      <div id="print-view-content" class="print-view-content"></div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
