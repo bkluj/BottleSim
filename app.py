@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from flask import Flask, jsonify, render_template, request
 
-from simulation import Bottle, Lens, compute_point_rays, compute_rays
+from simulation import Bottle, Lens, Mirror, compute_point_rays, compute_rays
 
 app = Flask(__name__)
 
@@ -56,6 +56,15 @@ def api_simulate():
                 refractive_index=_parse_float(payload, "lens_refractive_index", 1.5),
             )
 
+        mirror = None
+        if payload.get("mirror_enabled"):
+            mirror = Mirror(
+                center_x_mm=_parse_float(payload, "mirror_center_x_mm", 0.0),
+                center_y_mm=_parse_float(payload, "mirror_center_y_mm", 0.0),
+                length_mm=_parse_float(payload, "mirror_length_mm", 60.0),
+                angle_deg=_parse_float(payload, "mirror_angle_deg", 90.0),
+            )
+
         if mode == "point":
             source_x_mm = _parse_float(payload, "source_x_mm", -170.0)
             source_y_mm = _parse_float(payload, "source_y_mm", 0.0)
@@ -74,6 +83,7 @@ def api_simulate():
                 aim_offset_deg=aim_offset_deg,
                 beam_spread_deg=beam_spread_deg,
                 lens=lens,
+                mirror=mirror,
             )
             source = {"x": source_x_mm, "y": source_y_mm}
         elif mode == "parallel":
@@ -86,6 +96,7 @@ def api_simulate():
                 beam_angle_deg=beam_angle_deg,
                 beam_half_height_mm=beam_half_height_mm,
                 lens=lens,
+                mirror=mirror,
             )
         else:
             return jsonify({"error": f"Nieznany tryb źródła światła: '{mode}'."}), 400

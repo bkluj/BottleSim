@@ -13,6 +13,7 @@
   --source: #eda100;
   --incident: #eda100;
   --lens: #7a5cff;
+  --mirror: #0e9594;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -31,6 +32,7 @@
     --source: #c98500;
     --incident: #c98500;
     --lens: #9d84ff;
+    --mirror: #3dd0ce;
   }
 }
 
@@ -164,6 +166,11 @@ label:last-child {
 
 .hint {
   color: var(--text-muted);
+  font-weight: 400;
+}
+
+.field-error {
+  color: var(--danger);
   font-weight: 400;
 }
 

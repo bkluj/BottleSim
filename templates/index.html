@@ -58,15 +58,17 @@
           </div>
 
           <div id="mode-point-position-fields" class="mode-fields">
-            <label class="control-row">
-              Pozycja X [mm]
-              <input type="number" id="source_x_mm" name="source_x_mm" value="-170" step="1">
-            </label>
-            <label class="control-row">
-              Pozycja Y [mm]
-              <input type="number" id="source_y_mm" name="source_y_mm" value="0" step="1">
-            </label>
-            <span class="hint">(albo przeciągnij punkt na rysunku)</span>
+            <div id="source-cartesian-fields">
+              <label class="control-row">
+                Pozycja X [mm]
+                <input type="number" id="source_x_mm" name="source_x_mm" value="-170" step="1">
+              </label>
+              <label class="control-row">
+                Pozycja Y [mm]
+                <input type="number" id="source_y_mm" name="source_y_mm" value="0" step="1">
+              </label>
+              <span class="hint">(albo przeciągnij punkt na rysunku)</span>
+            </div>
 
             <label class="checkbox-label">
               <input type="checkbox" id="angle_link_center">
@@ -120,14 +122,17 @@
           </label>
 
           <div id="lens-fields" class="mode-fields">
-            <label class="control-row">
-              Pozycja X [mm]
-              <input type="number" id="lens_center_x_mm" name="lens_center_x_mm" value="-100" step="1">
-            </label>
-            <label class="control-row">
-              Pozycja Y [mm]
-              <input type="number" id="lens_center_y_mm" name="lens_center_y_mm" value="0" step="1">
-            </label>
+            <div id="lens-cartesian-fields">
+              <label class="control-row">
+                Pozycja X [mm]
+                <input type="number" id="lens_center_x_mm" name="lens_center_x_mm" value="-100" step="1">
+              </label>
+              <label class="control-row">
+                Pozycja Y [mm]
+                <input type="number" id="lens_center_y_mm" name="lens_center_y_mm" value="0" step="1">
+              </label>
+              <span class="hint">(albo przeciągnij środek na rysunku)</span>
+            </div>
             <label class="control-row">
               Średnica [mm]
               <input type="number" id="lens_diameter_mm" name="lens_diameter_mm" value="40" min="1" step="1">
@@ -136,7 +141,76 @@
               n soczewki
               <input type="number" id="lens_refractive_index" name="lens_refractive_index" value="1.5" min="1" step="0.01">
             </label>
-            <span class="hint">(albo przeciągnij środek na rysunku)</span>
+          </div>
+        </fieldset>
+
+        <fieldset class="toolbar-section">
+          <legend>Lustro</legend>
+          <label class="checkbox-label">
+            <input type="checkbox" id="mirror_enabled">
+            Pokaż lustro
+          </label>
+
+          <div id="mirror-fields" class="mode-fields hidden">
+            <label class="control-row">
+              Pozycja X [mm]
+              <input type="number" id="mirror_center_x_mm" name="mirror_center_x_mm" value="150" step="1">
+            </label>
+            <label class="control-row">
+              Pozycja Y [mm]
+              <input type="number" id="mirror_center_y_mm" name="mirror_center_y_mm" value="0" step="1">
+            </label>
+            <label class="control-row">
+              Długość [mm]
+              <input type="number" id="mirror_length_mm" name="mirror_length_mm" value="80" min="1" step="1">
+            </label>
+            <label class="control-row">
+              Kąt [°]
+              <input type="number" id="mirror_angle_deg" name="mirror_angle_deg" value="90" step="1">
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset class="toolbar-section">
+          <legend>Pozycjonowanie</legend>
+          <div class="mode-toggle">
+            <label class="radio-label">
+              <input type="radio" name="position_mode" value="cartesian" checked>
+              Kartezjański (X/Y)
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="position_mode" value="orbital">
+              Kąt i odległości
+            </label>
+          </div>
+
+          <div id="orbital-fields" class="mode-fields hidden">
+            <label class="control-row">
+              Kąt soczewki wokół butelki [°]
+              <input type="number" id="lens_orbital_angle_deg" value="180" step="1">
+            </label>
+            <label class="control-row">
+              Odległość butelka–soczewka [mm]
+              <input type="number" id="bottle_lens_gap_mm" value="25" min="0" step="1">
+            </label>
+
+            <label class="checkbox-label">
+              <input type="checkbox" id="link_orbital_angles" checked>
+              Powiąż kąty źródła i soczewki
+            </label>
+
+            <div id="source-orbital-fields">
+              <label class="control-row">
+                Kąt źródła wokół butelki [°]
+                <input type="number" id="source_orbital_angle_deg" value="180" step="1" disabled>
+              </label>
+              <label class="control-row">
+                Odległość źródło–soczewka [mm]
+                <input type="number" id="source_lens_gap_mm" value="100" min="0" step="1">
+              </label>
+            </div>
+
+            <div id="orbital-validation-msg" class="hint field-error hidden"></div>
           </div>
         </fieldset>
 
@@ -158,6 +232,17 @@
           </button>
         </fieldset>
 
+        <fieldset class="toolbar-section">
+          <legend>Ustawienia</legend>
+          <button type="button" id="save-settings-btn">
+            Zapisz ustawienia (JSON)
+          </button>
+          <button type="button" id="load-settings-btn">
+            Wczytaj ustawienia (JSON)
+          </button>
+          <input type="file" id="load-settings-input" accept="application/json,.json" class="hidden">
+        </fieldset>
+
         <details class="toolbar-section">
           <summary>Kolory</summary>
           <label class="control-row">
@@ -167,6 +252,10 @@
           <label class="control-row">
             Soczewka
             <input type="color" id="color_lens">
+          </label>
+          <label class="control-row">
+            Lustro
+            <input type="color" id="color_mirror">
           </label>
           <label class="control-row">
             Padające
@@ -185,6 +274,19 @@
             <input type="color" id="color_grid">
           </label>
           <button type="button" id="reset-colors-btn">Przywróć kolory domyślne</button>
+
+          <label class="control-row">
+            Krycie: padające
+            <input type="range" id="incident_alpha" min="0" max="1" step="0.05" value="1">
+          </label>
+          <label class="control-row">
+            Krycie: załamane
+            <input type="range" id="refracted_alpha" min="0" max="1" step="0.05" value="1">
+          </label>
+          <label class="control-row">
+            Krycie: odbite
+            <input type="range" id="reflected_alpha" min="0" max="1" step="0.05" value="1">
+          </label>
         </details>
         </div>
       </form>
@@ -214,12 +316,22 @@
             <div class="inspector-row"><span>Środek Y</span><span id="insp-lens-y"></span></div>
             <div class="inspector-row"><span>Średnica</span><span id="insp-lens-d"></span></div>
             <div class="inspector-row"><span>n</span><span id="insp-lens-n"></span></div>
+            <div class="inspector-row"><span>Kąt wokół butelki</span><span id="insp-lens-angle"></span></div>
+          </div>
+          <div class="inspector-group">
+            <div class="inspector-title">Lustro</div>
+            <div class="inspector-row"><span>Aktywne</span><span id="insp-mirror-active"></span></div>
+            <div class="inspector-row"><span>Środek X</span><span id="insp-mirror-x"></span></div>
+            <div class="inspector-row"><span>Środek Y</span><span id="insp-mirror-y"></span></div>
+            <div class="inspector-row"><span>Długość</span><span id="insp-mirror-length"></span></div>
+            <div class="inspector-row"><span>Kąt</span><span id="insp-mirror-angle"></span></div>
           </div>
           <div class="inspector-group">
             <div class="inspector-title">Źródło światła</div>
             <div class="inspector-row"><span>Pozycja X</span><span id="insp-source-x"></span></div>
             <div class="inspector-row"><span>Pozycja Y</span><span id="insp-source-y"></span></div>
             <div class="inspector-row"><span>Odl. od środka</span><span id="insp-source-dist"></span></div>
+            <div class="inspector-row"><span>Kąt wokół butelki</span><span id="insp-source-angle"></span></div>
           </div>
           <div class="inspector-group">
             <div class="inspector-title">Wiązka</div>
@@ -230,9 +342,10 @@
           </div>
           <div class="inspector-group">
             <div class="inspector-title">Odległości</div>
-            <div class="inspector-row"><span>Źródło–soczewka</span><span id="insp-dist-source-lens"></span></div>
-            <div class="inspector-row"><span>Soczewka–butelka</span><span id="insp-dist-lens-bottle"></span></div>
+            <div class="inspector-row"><span>Butelka–soczewka (powierzchnie)</span><span id="insp-dist-lens-bottle"></span></div>
+            <div class="inspector-row"><span>Źródło–soczewka (powierzchnie)</span><span id="insp-dist-source-lens"></span></div>
             <div class="inspector-row"><span>Kąt źródło–środek</span><span id="insp-angle-source-center"></span></div>
+            <div class="inspector-row"><span>Różnica kątów (soczewka−źródło)</span><span id="insp-angle-diff"></span></div>
           </div>
         </div>
       </aside>
@@ -292,6 +405,10 @@
           Pokaż promienie
         </label>
         <label class="checkbox-label">
+          <input type="checkbox" id="export_show_reflected">
+          Pokaż promienie odbite
+        </label>
+        <label class="checkbox-label">
           <input type="checkbox" id="export_show_dimensions">
           Pokaż wymiary
         </label>
@@ -304,6 +421,7 @@
 
         <div class="export-actions">
           <button type="button" id="export-download-btn">Pobierz SVG</button>
+          <button type="button" id="export-download-pdf-btn">Pobierz PDF</button>
           <button type="button" id="export-oversize-btn" class="hidden">Eksportuj całą scenę (dopasowany rozmiar)</button>
           <button type="button" id="export-print-view-btn">Otwórz widok wydruku</button>
           <button type="submit" id="export-close-btn">Zamknij</button>
@@ -320,6 +438,8 @@
     </div>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/svg2pdf.js@2.2.3/dist/svg2pdf.umd.min.js"></script>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>

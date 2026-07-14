@@ -25,10 +25,47 @@
   const lensCenterXInput = document.getElementById("lens_center_x_mm");
   const lensCenterYInput = document.getElementById("lens_center_y_mm");
   const lensDiameterInput = document.getElementById("lens_diameter_mm");
+  const mirrorEnabledCheckbox = document.getElementById("mirror_enabled");
+  const mirrorFields = document.getElementById("mirror-fields");
+  const mirrorCenterXInput = document.getElementById("mirror_center_x_mm");
+  const mirrorCenterYInput = document.getElementById("mirror_center_y_mm");
+  const mirrorLengthInput = document.getElementById("mirror_length_mm");
+  const mirrorAngleInput = document.getElementById("mirror_angle_deg");
+
+  // --- positioning mode: cartesian (X/Y, draggable) vs orbital (angle + gap distances) ---
+  const positionModeRadios = form.querySelectorAll('input[name="position_mode"]');
+  const lensCartesianFields = document.getElementById("lens-cartesian-fields");
+  const sourceCartesianFields = document.getElementById("source-cartesian-fields");
+  const orbitalFields = document.getElementById("orbital-fields");
+  const sourceOrbitalFields = document.getElementById("source-orbital-fields");
+  const lensOrbitalAngleInput = document.getElementById("lens_orbital_angle_deg");
+  const sourceOrbitalAngleInput = document.getElementById("source_orbital_angle_deg");
+  const linkOrbitalAnglesCheckbox = document.getElementById("link_orbital_angles");
+  const bottleLensGapInput = document.getElementById("bottle_lens_gap_mm");
+  const sourceLensGapInput = document.getElementById("source_lens_gap_mm");
+  const orbitalValidationMsg = document.getElementById("orbital-validation-msg");
+  // Used only as a fallback radial distance for the source when the lens is
+  // disabled (so there's no lens surface to measure the source gap against).
+  const DEFAULT_SOURCE_STANDOFF_MM = 135;
+
+  // --- per-ray-type opacity: rendering-only, applies to canvas, print view, and SVG export ---
+  const incidentAlphaInput = document.getElementById("incident_alpha");
+  const refractedAlphaInput = document.getElementById("refracted_alpha");
+  const reflectedAlphaInput = document.getElementById("reflected_alpha");
+
+  function currentAlphas() {
+    const clamp = (v) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1);
+    return {
+      incident: clamp(Number(incidentAlphaInput.value)),
+      refracted: clamp(Number(refractedAlphaInput.value)),
+      reflected: clamp(Number(reflectedAlphaInput.value)),
+    };
+  }
   const resetColorsBtn = document.getElementById("reset-colors-btn");
   const colorInputs = {
     bottle: document.getElementById("color_bottle"),
     lens: document.getElementById("color_lens"),
+    mirror: document.getElementById("color_mirror"),
     incident: document.getElementById("color_incident"),
     refracted: document.getElementById("color_refracted"),
     reflected: document.getElementById("color_reflected"),
@@ -56,16 +93,23 @@
   const exportPosY = document.getElementById("export_pos_y_mm");
   const exportShowGrid = document.getElementById("export_show_grid");
   const exportShowRays = document.getElementById("export_show_rays");
+  const exportShowReflected = document.getElementById("export_show_reflected");
   const exportShowDimensions = document.getElementById("export_show_dimensions");
   const exportShowColors = document.getElementById("export_show_colors");
   const exportWarning = document.getElementById("export-warning");
   const exportDownloadBtn = document.getElementById("export-download-btn");
+  const exportDownloadPdfBtn = document.getElementById("export-download-pdf-btn");
   const exportOversizeBtn = document.getElementById("export-oversize-btn");
   const exportPrintViewBtn = document.getElementById("export-print-view-btn");
   const printView = document.getElementById("print-view");
   const printViewContent = document.getElementById("print-view-content");
   const printNowBtn = document.getElementById("print-now-btn");
   const printCloseBtn = document.getElementById("print-close-btn");
+
+  // --- settings save/load (JSON) ---
+  const saveSettingsBtn = document.getElementById("save-settings-btn");
+  const loadSettingsBtn = document.getElementById("load-settings-btn");
+  const loadSettingsInput = document.getElementById("load-settings-input");
 
   let requestToken = 0;
   let lastTransform = null; // {scale, originX, originY} of the most recent draw()
@@ -134,6 +178,7 @@
       source: style.getPropertyValue("--source").trim(),
       bottle: style.getPropertyValue("--baseline").trim(),
       lens: style.getPropertyValue("--lens").trim(),
+      mirror: style.getPropertyValue("--mirror").trim(),
       incident: style.getPropertyValue("--incident").trim(),
       refracted: style.getPropertyValue("--accent").trim(),
       reflected: style.getPropertyValue("--danger").trim(),
@@ -168,6 +213,26 @@
         }
       : null;
 
+    const mirror = mirrorEnabledCheckbox.checked
+      ? (() => {
+          const centerXMm = Number(mirrorCenterXInput.value) || 0;
+          const centerYMm = Number(mirrorCenterYInput.value) || 0;
+          const lengthMm = Number(mirrorLengthInput.value) || 0;
+          const angleDeg = Number(mirrorAngleInput.value) || 0;
+          const angleRad = (angleDeg * Math.PI) / 180;
+          const dir = { x: Math.cos(angleRad), y: Math.sin(angleRad) };
+          const half = lengthMm / 2;
+          return {
+            centerXMm,
+            centerYMm,
+            lengthMm,
+            angleDeg,
+            p1: { x: centerXMm - dir.x * half, y: centerYMm - dir.y * half },
+            p2: { x: centerXMm + dir.x * half, y: centerYMm + dir.y * half },
+          };
+        })()
+      : null;
+
     const source =
       mode === "point"
         ? { xMm: Number(sourceXInput.value) || 0, yMm: Number(sourceYInput.value) || 0 }
@@ -191,6 +256,7 @@
       outerRadius,
       innerRadius,
       lens,
+      mirror,
       source,
       centralAngleDeg,
       spreadDeg,
@@ -207,6 +273,7 @@
     }
     params.angle_mode = angleLinkCheckbox.checked ? "center" : "fixed";
     params.lens_enabled = lensEnabledCheckbox.checked;
+    params.mirror_enabled = mirrorEnabledCheckbox.checked;
     return params;
   }
 
@@ -335,21 +402,38 @@
     setInsp("insp-bottle-outer", fmtUnit(m.outerRadius * 2, "mm"));
     setInsp("insp-bottle-inner", fmtUnit(m.innerRadius * 2, "mm"));
 
+    const angleAroundCenterDeg = (xMm, yMm) => (Math.atan2(yMm, xMm) * 180) / Math.PI;
+
     if (m.lens) {
       setInsp("insp-lens-x", fmtUnit(m.lens.centerXMm, "mm"));
       setInsp("insp-lens-y", fmtUnit(m.lens.centerYMm, "mm"));
       setInsp("insp-lens-d", fmtUnit(m.lens.diameterMm, "mm"));
       setInsp("insp-lens-n", m.lens.n.toFixed(3));
+      setInsp("insp-lens-angle", fmtUnit(angleAroundCenterDeg(m.lens.centerXMm, m.lens.centerYMm), "°"));
     } else {
-      ["insp-lens-x", "insp-lens-y", "insp-lens-d", "insp-lens-n"].forEach((id) => setInsp(id, "—"));
+      ["insp-lens-x", "insp-lens-y", "insp-lens-d", "insp-lens-n", "insp-lens-angle"].forEach((id) => setInsp(id, "—"));
+    }
+
+    if (m.mirror) {
+      setInsp("insp-mirror-active", "tak");
+      setInsp("insp-mirror-x", fmtUnit(m.mirror.centerXMm, "mm"));
+      setInsp("insp-mirror-y", fmtUnit(m.mirror.centerYMm, "mm"));
+      setInsp("insp-mirror-length", fmtUnit(m.mirror.lengthMm, "mm"));
+      setInsp("insp-mirror-angle", fmtUnit(m.mirror.angleDeg, "°"));
+    } else {
+      setInsp("insp-mirror-active", "nie");
+      ["insp-mirror-x", "insp-mirror-y", "insp-mirror-length", "insp-mirror-angle"].forEach((id) => setInsp(id, "—"));
     }
 
     if (m.source) {
       setInsp("insp-source-x", fmtUnit(m.source.xMm, "mm"));
       setInsp("insp-source-y", fmtUnit(m.source.yMm, "mm"));
       setInsp("insp-source-dist", fmtUnit(Math.hypot(m.source.xMm, m.source.yMm), "mm"));
+      setInsp("insp-source-angle", fmtUnit(angleAroundCenterDeg(m.source.xMm, m.source.yMm), "°"));
     } else {
-      ["insp-source-x", "insp-source-y", "insp-source-dist"].forEach((id) => setInsp(id, "— (równoległa)"));
+      ["insp-source-x", "insp-source-y", "insp-source-dist", "insp-source-angle"].forEach((id) =>
+        setInsp(id, "— (równoległa)")
+      );
     }
 
     setInsp("insp-beam-angle", fmtUnit(m.centralAngleDeg, "°"));
@@ -357,19 +441,34 @@
     setInsp("insp-beam-mode", m.angleModeLabel);
     setInsp("insp-ray-count", String(m.rayCount));
 
+    // Gaps are surface-to-surface (center distance minus the radii involved),
+    // matching how "odległość" is defined for the orbital positioning mode.
     setInsp(
       "insp-dist-source-lens",
       m.source && m.lens
-        ? fmtUnit(Math.hypot(m.source.xMm - m.lens.centerXMm, m.source.yMm - m.lens.centerYMm), "mm")
+        ? fmtUnit(Math.hypot(m.source.xMm - m.lens.centerXMm, m.source.yMm - m.lens.centerYMm) - m.lens.radiusMm, "mm")
         : "—"
     );
     setInsp(
       "insp-dist-lens-bottle",
-      m.lens ? fmtUnit(Math.hypot(m.lens.centerXMm, m.lens.centerYMm), "mm") : "—"
+      m.lens ? fmtUnit(Math.hypot(m.lens.centerXMm, m.lens.centerYMm) - m.outerRadius - m.lens.radiusMm, "mm") : "—"
     );
     setInsp(
       "insp-angle-source-center",
       m.source ? fmtUnit((Math.atan2(-m.source.yMm, -m.source.xMm) * 180) / Math.PI, "°") : "—"
+    );
+    setInsp(
+      "insp-angle-diff",
+      m.source && m.lens
+        ? fmtUnit(
+            ((angleAroundCenterDeg(m.lens.centerXMm, m.lens.centerYMm) -
+              angleAroundCenterDeg(m.source.xMm, m.source.yMm) +
+              540) %
+              360) -
+              180,
+            "°"
+          )
+        : "—"
     );
   }
 
@@ -526,18 +625,56 @@
       ctx.globalAlpha = 1;
     }
 
+    // mirror — an opaque segment, drawn as a thick line with perpendicular
+    // hatch ticks (standard optics-diagram notation for a reflective surface)
+    // so it reads as clearly distinct from the lens circle / bottle rings.
+    if (mirrorEnabledCheckbox.checked) {
+      const centerXMm = Number(mirrorCenterXInput.value) || 0;
+      const centerYMm = Number(mirrorCenterYInput.value) || 0;
+      const lengthMm = Number(mirrorLengthInput.value) || 0;
+      const angleRad = ((Number(mirrorAngleInput.value) || 0) * Math.PI) / 180;
+      const dir = { x: Math.cos(angleRad), y: Math.sin(angleRad) };
+      const half = lengthMm / 2;
+      const [mx1, my1] = toCanvas(centerXMm - dir.x * half, centerYMm - dir.y * half);
+      const [mx2, my2] = toCanvas(centerXMm + dir.x * half, centerYMm + dir.y * half);
+
+      ctx.strokeStyle = colors.mirror;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(mx1, my1);
+      ctx.lineTo(mx2, my2);
+      ctx.stroke();
+
+      // hatch ticks along the back of the mirror
+      const nx = -dir.y;
+      const ny = dir.x;
+      const tickLenPx = 7;
+      const tickCount = Math.max(2, Math.round(lengthMm / 12));
+      ctx.lineWidth = 1.5;
+      for (let i = 0; i <= tickCount; i++) {
+        const t = i / tickCount;
+        const px = mx1 + (mx2 - mx1) * t;
+        const py = my1 + (my2 - my1) * t;
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(px + nx * tickLenPx, py - ny * tickLenPx);
+        ctx.stroke();
+      }
+    }
+
     // rays — dense beams skip per-vertex markers and thin out for readability.
     // First segment (source to first hit) is drawn as "incident", the rest of
     // the transmitted path as "refracted" — a simple visual split, not a new
     // physical concept: the geometry itself is untouched.
     const dense = rays.length > 60;
+    const alphas = currentAlphas();
     ctx.lineWidth = dense ? 1 : 1.5;
-    ctx.globalAlpha = dense ? 0.55 : 1;
 
     for (const ray of rays) {
       const pts = ray.points;
 
       ctx.strokeStyle = colors.incident;
+      ctx.globalAlpha = (dense ? 0.55 : 1) * alphas.incident;
       ctx.beginPath();
       const [ix0, iy0] = toCanvas(pts[0][0], pts[0][1]);
       ctx.moveTo(ix0, iy0);
@@ -547,6 +684,7 @@
 
       if (pts.length > 2) {
         ctx.strokeStyle = colors.refracted;
+        ctx.globalAlpha = (dense ? 0.55 : 1) * alphas.refracted;
         ctx.beginPath();
         pts.slice(1).forEach(([x, y], i) => {
           const [px, py] = toCanvas(x, y);
@@ -558,6 +696,7 @@
 
       if (!dense) {
         ctx.fillStyle = colors.refracted;
+        ctx.globalAlpha = alphas.refracted;
         for (const [x, y] of pts) {
           const [px, py] = toCanvas(x, y);
           ctx.beginPath();
@@ -573,16 +712,16 @@
     if (showReflectedRays) {
       ctx.strokeStyle = colors.reflected;
       ctx.lineWidth = dense ? 1 : 1.25;
-      ctx.globalAlpha = dense ? 0.45 : 0.75;
+      ctx.globalAlpha = (dense ? 0.45 : 0.75) * alphas.reflected;
       ctx.setLineDash([6, 4]);
       for (const ray of rays) {
         for (const segment of ray.reflected) {
-          const [[x1, y1], [x2, y2]] = segment.points;
-          const [px1, py1] = toCanvas(x1, y1);
-          const [px2, py2] = toCanvas(x2, y2);
           ctx.beginPath();
-          ctx.moveTo(px1, py1);
-          ctx.lineTo(px2, py2);
+          segment.points.forEach(([x, y], i) => {
+            const [px, py] = toCanvas(x, y);
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          });
           ctx.stroke();
         }
       }
@@ -612,6 +751,11 @@
   }
 
   async function runSimulation() {
+    // Single choke point: whatever triggered this call (bottle radius, lens
+    // diameter, an orbital angle/gap, or a mode switch), re-derive lens/source
+    // X/Y from the orbital inputs first if that positioning mode is active.
+    syncOrbitalPositions();
+
     const token = ++requestToken;
 
     let response;
@@ -690,6 +834,8 @@
   modeRadios.forEach((radio) => {
     radio.addEventListener("change", () => {
       applyMode();
+      applyPositionMode();
+      syncOrbitalPositions();
       liveUpdate();
     });
   });
@@ -725,14 +871,157 @@
   }
   lensEnabledCheckbox.addEventListener("change", () => {
     applyLensMode();
+    syncOrbitalPositions();
     liveUpdate();
   });
   applyLensMode();
 
+  // Mirror is a self-contained opaque obstacle: no positioning-mode coupling
+  // (no orbital placement, unlike the lens) — plain X/Y + length + angle only.
+  function applyMirrorMode() {
+    mirrorFields.classList.toggle("hidden", !mirrorEnabledCheckbox.checked);
+  }
+  mirrorEnabledCheckbox.addEventListener("change", () => {
+    applyMirrorMode();
+    liveUpdate();
+  });
+  applyMirrorMode();
+
+  // --- positioning mode: cartesian (direct X/Y, draggable) vs orbital
+  // (angle around the bottle + surface-to-surface gap distances). Either way,
+  // the actual physics/backend payload is still just lens_center_x/y_mm and
+  // source_x/y_mm — orbital mode only computes those two pairs differently
+  // and writes them into the same (now hidden) cartesian inputs.
+  function currentPositionMode() {
+    return form.querySelector('input[name="position_mode"]:checked').value;
+  }
+
+  function applyPositionMode() {
+    const isOrbital = currentPositionMode() === "orbital";
+    lensCartesianFields.classList.toggle("hidden", isOrbital);
+    sourceCartesianFields.classList.toggle("hidden", isOrbital);
+    orbitalFields.classList.toggle("hidden", !isOrbital);
+    sourceOrbitalFields.classList.toggle("hidden", currentMode() !== "point");
+    if (!isOrbital) {
+      orbitalValidationMsg.classList.add("hidden");
+    }
+  }
+
+  // Solves for the source's distance from the bottle center (rho) along the
+  // fixed direction sourceOrbitalAngleDeg, such that its distance to the LENS
+  // SURFACE equals sourceLensGapMm: |rho*u - L| = lensRadius + gap. Expanding
+  // that gives rho^2 - 2*rho*(u.L) + |L|^2 - (lensRadius+gap)^2 = 0; of its
+  // (up to two) positive roots outside the bottle, the farther one is kept —
+  // matching the requested "collinear beyond the lens" placement when linked.
+  function solveSourceRadialDistance(sourceDirection, lensCenter, lensRadius, gapMm, bottleRadius) {
+    const targetDist = lensRadius + gapMm;
+    const uDotL = sourceDirection.x * lensCenter.x + sourceDirection.y * lensCenter.y;
+    const lensDistSq = lensCenter.x * lensCenter.x + lensCenter.y * lensCenter.y;
+    const a = 1;
+    const b = -2 * uDotL;
+    const c = lensDistSq - targetDist * targetDist;
+    const discriminant = b * b - 4 * a * c;
+    if (discriminant < 0) return null;
+
+    const sqrtDisc = Math.sqrt(discriminant);
+    const roots = [(-b - sqrtDisc) / (2 * a), (-b + sqrtDisc) / (2 * a)];
+    const valid = roots.filter((r) => r > bottleRadius + 1e-6);
+    return valid.length ? Math.max(...valid) : null;
+  }
+
+  // Recomputes lens_center_x/y_mm and (in point mode) source_x/y_mm from the
+  // orbital angle/gap inputs. No-op outside orbital mode. Never resets the
+  // source position on failure — it just leaves the last valid X/Y in place
+  // and surfaces a validation message, as requested.
+  function syncOrbitalPositions() {
+    if (currentPositionMode() !== "orbital") return;
+
+    const bottleRadius = Number(outerRadiusInput.value) || 0;
+    const lensOn = lensEnabledCheckbox.checked;
+    const lensRadius = (Number(lensDiameterInput.value) || 0) / 2;
+    const lensAngleRad = ((Number(lensOrbitalAngleInput.value) || 0) * Math.PI) / 180;
+    const lensDirection = { x: Math.cos(lensAngleRad), y: Math.sin(lensAngleRad) };
+
+    let lensCenter = null;
+    if (lensOn) {
+      const bottleLensGap = Number(bottleLensGapInput.value) || 0;
+      const lensCenterDistance = bottleRadius + bottleLensGap + lensRadius;
+      lensCenter = { x: lensDirection.x * lensCenterDistance, y: lensDirection.y * lensCenterDistance };
+      lensCenterXInput.value = lensCenter.x.toFixed(1);
+      lensCenterYInput.value = lensCenter.y.toFixed(1);
+    }
+
+    if (currentMode() !== "point") {
+      orbitalValidationMsg.classList.add("hidden");
+      return; // parallel beams have no discrete source position to place
+    }
+
+    const sourceAngleRad = ((Number(sourceOrbitalAngleInput.value) || 0) * Math.PI) / 180;
+    const sourceDirection = { x: Math.cos(sourceAngleRad), y: Math.sin(sourceAngleRad) };
+
+    let sourceRadialDistance;
+    if (lensOn) {
+      const gap = Number(sourceLensGapInput.value) || 0;
+      sourceRadialDistance = solveSourceRadialDistance(sourceDirection, lensCenter, lensRadius, gap, bottleRadius);
+    } else {
+      // No lens surface to gap against — fall back to a fixed standoff.
+      sourceRadialDistance = bottleRadius + DEFAULT_SOURCE_STANDOFF_MM;
+    }
+
+    if (sourceRadialDistance === null) {
+      orbitalValidationMsg.textContent = "Dla podanych kątów nie można zachować zadanej odległości źródło–soczewka.";
+      orbitalValidationMsg.classList.remove("hidden");
+      return; // keep the last valid source_x_mm/source_y_mm untouched
+    }
+
+    orbitalValidationMsg.classList.add("hidden");
+    sourceXInput.value = (sourceDirection.x * sourceRadialDistance).toFixed(1);
+    sourceYInput.value = (sourceDirection.y * sourceRadialDistance).toFixed(1);
+  }
+
+  positionModeRadios.forEach((radio) => {
+    radio.addEventListener("change", () => {
+      applyPositionMode();
+      syncOrbitalPositions();
+      liveUpdate();
+    });
+  });
+  applyPositionMode();
+
+  lensOrbitalAngleInput.addEventListener("input", () => {
+    if (linkOrbitalAnglesCheckbox.checked) {
+      sourceOrbitalAngleInput.value = lensOrbitalAngleInput.value;
+    }
+    syncOrbitalPositions();
+    liveUpdate();
+  });
+
+  sourceOrbitalAngleInput.addEventListener("input", () => {
+    syncOrbitalPositions();
+    liveUpdate();
+  });
+
+  linkOrbitalAnglesCheckbox.addEventListener("change", () => {
+    sourceOrbitalAngleInput.disabled = linkOrbitalAnglesCheckbox.checked;
+    if (linkOrbitalAnglesCheckbox.checked) {
+      sourceOrbitalAngleInput.value = lensOrbitalAngleInput.value;
+    }
+    syncOrbitalPositions();
+    liveUpdate();
+  });
+
+  [bottleLensGapInput, sourceLensGapInput].forEach((input) => {
+    input.addEventListener("input", () => {
+      syncOrbitalPositions();
+      liveUpdate();
+    });
+  });
+
   form.addEventListener("submit", (event) => event.preventDefault());
   form
     .querySelectorAll(
-      'input:not(#ray_count_slider):not(#ray_count):not([name="mode"]):not(#angle_link_center):not(#show_grid):not(#lens_enabled):not(#show_dimensions):not([type="color"])'
+      'input:not(#ray_count_slider):not(#ray_count):not([name="mode"]):not(#angle_link_center):not(#show_grid):not(#lens_enabled):not(#mirror_enabled):not(#show_dimensions):not([type="color"]):not([type="range"])' +
+        ':not([name="position_mode"]):not(#link_orbital_angles):not(#lens_orbital_angle_deg):not(#source_orbital_angle_deg):not(#bottle_lens_gap_mm):not(#source_lens_gap_mm)'
     )
     .forEach((input) => {
       input.addEventListener("input", liveUpdate);
@@ -791,6 +1080,156 @@
     }
   });
 
+  [incidentAlphaInput, refractedAlphaInput, reflectedAlphaInput].forEach((input) => {
+    input.addEventListener("input", () => {
+      if (lastResult) draw(lastResult);
+    });
+  });
+
+  // --- settings save/load: dumps/restores every toolbar value (geometry,
+  // source, beam, lens, view toggles, colors) as a single JSON file, so a
+  // scene can be handed off or reloaded later without retyping it.
+  const SETTINGS_FIELD_IDS = [
+    "outer_radius_mm", "wall_thickness_mm",
+    "n_outside", "n_glass", "n_inside",
+    "source_x_mm", "source_y_mm",
+    "ray_count",
+    "beam_angle_deg", "beam_half_height_mm",
+    "point_beam_angle_deg", "aim_offset_deg", "beam_spread_deg",
+    "lens_center_x_mm", "lens_center_y_mm", "lens_diameter_mm", "lens_refractive_index",
+    "mirror_center_x_mm", "mirror_center_y_mm", "mirror_length_mm", "mirror_angle_deg",
+  ];
+  const SETTINGS_CHECKBOX_IDS = ["angle_link_center", "lens_enabled", "mirror_enabled", "show_grid", "show_dimensions"];
+
+  function gatherSettings() {
+    const values = {};
+    for (const id of SETTINGS_FIELD_IDS) {
+      values[id] = document.getElementById(id).value;
+    }
+    const checkboxes = {};
+    for (const id of SETTINGS_CHECKBOX_IDS) {
+      checkboxes[id] = document.getElementById(id).checked;
+    }
+    return {
+      version: 1,
+      mode: currentMode(),
+      values,
+      checkboxes,
+      showReflectedRays,
+      userColors,
+      // Orbital (angle + gap-distance) positioning, saved regardless of which
+      // mode is currently active so switching back to it later restores the
+      // last values; older files without these keys stay in cartesian mode.
+      positionMode: currentPositionMode(),
+      lensOrbitalAngleDeg: Number(lensOrbitalAngleInput.value),
+      sourceOrbitalAngleDeg: Number(sourceOrbitalAngleInput.value),
+      linkOrbitalAngles: linkOrbitalAnglesCheckbox.checked,
+      bottleLensGapMm: Number(bottleLensGapInput.value),
+      sourceLensGapMm: Number(sourceLensGapInput.value),
+      incidentAlpha: Number(incidentAlphaInput.value),
+      refractedAlpha: Number(refractedAlphaInput.value),
+      reflectedAlpha: Number(reflectedAlphaInput.value),
+    };
+  }
+
+  function applySettings(data) {
+    if (!data || typeof data !== "object") {
+      throw new Error("Nieprawidłowy plik ustawień.");
+    }
+
+    if (data.values && typeof data.values === "object") {
+      for (const [id, value] of Object.entries(data.values)) {
+        const input = document.getElementById(id);
+        if (input) input.value = value;
+      }
+    }
+    if (data.checkboxes && typeof data.checkboxes === "object") {
+      for (const [id, checked] of Object.entries(data.checkboxes)) {
+        const input = document.getElementById(id);
+        if (input) input.checked = Boolean(checked);
+      }
+    }
+    if (data.mode === "parallel" || data.mode === "point") {
+      const radio = form.querySelector(`input[name="mode"][value="${data.mode}"]`);
+      if (radio) radio.checked = true;
+    }
+    if (data.userColors && typeof data.userColors === "object") {
+      userColors = { ...data.userColors };
+      saveUserColors();
+    }
+    if (typeof data.showReflectedRays === "boolean") {
+      showReflectedRays = data.showReflectedRays;
+      toggleReflectedBtn.setAttribute("aria-pressed", String(showReflectedRays));
+      toggleReflectedBtn.textContent = showReflectedRays
+        ? "Ukryj promienie odbite"
+        : "Pokaż promienie odbite";
+    }
+
+    // Older JSON files predate orbital positioning and carry none of these
+    // keys — they must keep working in plain cartesian mode.
+    if (typeof data.lensOrbitalAngleDeg === "number") lensOrbitalAngleInput.value = data.lensOrbitalAngleDeg;
+    if (typeof data.sourceOrbitalAngleDeg === "number") sourceOrbitalAngleInput.value = data.sourceOrbitalAngleDeg;
+    if (typeof data.bottleLensGapMm === "number") bottleLensGapInput.value = data.bottleLensGapMm;
+    if (typeof data.sourceLensGapMm === "number") sourceLensGapInput.value = data.sourceLensGapMm;
+    if (typeof data.linkOrbitalAngles === "boolean") {
+      linkOrbitalAnglesCheckbox.checked = data.linkOrbitalAngles;
+      sourceOrbitalAngleInput.disabled = data.linkOrbitalAngles;
+    }
+    const positionModeRadio = form.querySelector(
+      `input[name="position_mode"][value="${data.positionMode === "orbital" ? "orbital" : "cartesian"}"]`
+    );
+    if (positionModeRadio) positionModeRadio.checked = true;
+
+    // Older JSON files predate per-ray-type opacity — default to fully opaque (1).
+    incidentAlphaInput.value = typeof data.incidentAlpha === "number" ? data.incidentAlpha : 1;
+    refractedAlphaInput.value = typeof data.refractedAlpha === "number" ? data.refractedAlpha : 1;
+    reflectedAlphaInput.value = typeof data.reflectedAlpha === "number" ? data.reflectedAlpha : 1;
+
+    syncRayCount(rayCountNumber.value);
+    applyMode();
+    applyAngleMode();
+    applyLensMode();
+    applyMirrorMode();
+    applyPositionMode();
+    syncOrbitalPositions();
+    applyColorInputValues();
+    gridNoteEl.classList.toggle("hidden", !showGridCheckbox.checked);
+    runSimulation();
+  }
+
+  function downloadJson(obj, filename) {
+    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  saveSettingsBtn.addEventListener("click", () => {
+    downloadJson(gatherSettings(), "bottlesim-ustawienia.json");
+  });
+
+  loadSettingsBtn.addEventListener("click", () => {
+    loadSettingsInput.value = "";
+    loadSettingsInput.click();
+  });
+
+  loadSettingsInput.addEventListener("change", async () => {
+    const file = loadSettingsInput.files[0];
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      applySettings(data);
+      setStatus("Wczytano ustawienia z pliku.", false);
+    } catch (err) {
+      setStatus(`Nie udało się wczytać ustawień: ${err.message}`, true);
+    }
+  });
+
   // --- point-source and lens-center dragging on the canvas ---
   function clampOutsideBottle(x, y) {
     const outerRadius = Number(outerRadiusInput.value) || 1;
@@ -816,8 +1255,12 @@
     if (!lastTransform) return;
     const [mx, my] = pointerToCanvasXY(event);
 
+    // In orbital mode, source/lens X/Y are derived from the angle+gap inputs,
+    // not directly draggable — dragging the canvas always pans instead.
+    const positioningLocked = currentPositionMode() === "orbital";
+
     let sourceDist = Infinity;
-    if (currentMode() === "point") {
+    if (!positioningLocked && currentMode() === "point") {
       const [spx, spy] = [
         lastTransform.originX + Number(sourceXInput.value) * lastTransform.scale,
         lastTransform.originY - Number(sourceYInput.value) * lastTransform.scale,
@@ -826,7 +1269,7 @@
     }
 
     let lensDist = Infinity;
-    if (lensEnabledCheckbox.checked) {
+    if (!positioningLocked && lensEnabledCheckbox.checked) {
       const [lpx, lpy] = [
         lastTransform.originX + Number(lensCenterXInput.value) * lastTransform.scale,
         lastTransform.originY - Number(lensCenterYInput.value) * lastTransform.scale,
@@ -927,7 +1370,7 @@
     return orientation === "landscape" ? [Math.max(w, h), Math.min(w, h)] : [Math.min(w, h), Math.max(w, h)];
   }
 
-  function computeContentBBoxMm(m, includeRays) {
+  function computeContentBBoxMm(m, includeRays, includeReflected) {
     let minX = -m.outerRadius;
     let maxX = m.outerRadius;
     let minY = -m.outerRadius;
@@ -945,6 +1388,12 @@
       minY = Math.min(minY, m.source.yMm);
       maxY = Math.max(maxY, m.source.yMm);
     }
+    if (m.mirror) {
+      minX = Math.min(minX, m.mirror.p1.x, m.mirror.p2.x);
+      maxX = Math.max(maxX, m.mirror.p1.x, m.mirror.p2.x);
+      minY = Math.min(minY, m.mirror.p1.y, m.mirror.p2.y);
+      maxY = Math.max(maxY, m.mirror.p1.y, m.mirror.p2.y);
+    }
     if (includeRays && lastResult) {
       for (const ray of lastResult.rays) {
         for (const [x, y] of ray.points) {
@@ -952,6 +1401,18 @@
           maxX = Math.max(maxX, x);
           minY = Math.min(minY, y);
           maxY = Math.max(maxY, y);
+        }
+      }
+    }
+    if (includeReflected && lastResult) {
+      for (const ray of lastResult.rays) {
+        for (const segment of ray.reflected) {
+          for (const [x, y] of segment.points) {
+            minX = Math.min(minX, x);
+            maxX = Math.max(maxX, x);
+            minY = Math.min(minY, y);
+            maxY = Math.max(maxY, y);
+          }
         }
       }
     }
@@ -970,85 +1431,106 @@
     const docX = (x) => offsetX + x * scaleFactor;
     const docY = (y) => offsetY - y * scaleFactor;
 
-    const parts = [`<g font-size="2.6">`];
-    function tier(spacingMm, strokeWidth, opacity, withLabels) {
+    const parts = [`<g>`];
+    function tier(spacingMm, strokeWidth, opacity) {
       const startX = Math.ceil(worldMinX / spacingMm) * spacingMm;
       for (let x = startX; x <= worldMaxX; x += spacingMm) {
         parts.push(
           `<line x1="${docX(x)}" y1="${EXPORT_MARGIN_MM}" x2="${docX(x)}" y2="${pageH - EXPORT_MARGIN_MM}" stroke="${color}" stroke-width="${strokeWidth}" opacity="${opacity}"/>`
         );
-        if (withLabels) {
-          parts.push(`<text x="${docX(x)}" y="${pageH - EXPORT_MARGIN_MM + 4}" text-anchor="middle" fill="${color}">${x.toFixed(0)}</text>`);
-        }
       }
       const startY = Math.ceil(worldMinY / spacingMm) * spacingMm;
       for (let y = startY; y <= worldMaxY; y += spacingMm) {
         parts.push(
           `<line x1="${EXPORT_MARGIN_MM}" y1="${docY(y)}" x2="${pageW - EXPORT_MARGIN_MM}" y2="${docY(y)}" stroke="${color}" stroke-width="${strokeWidth}" opacity="${opacity}"/>`
         );
-        if (withLabels) {
-          parts.push(`<text x="${EXPORT_MARGIN_MM + 1}" y="${docY(y) - 1}" fill="${color}">${y.toFixed(0)}</text>`);
-        }
       }
     }
-    tier(EXPORT_FINE_GRID_MM, 0.08, 0.5, false);
-    tier(EXPORT_MEDIUM_GRID_MM, 0.1, 0.7, false);
-    tier(EXPORT_MAJOR_GRID_MM, 0.15, 1, true);
+    tier(EXPORT_FINE_GRID_MM, 0.08, 0.5);
+    tier(EXPORT_MEDIUM_GRID_MM, 0.1, 0.7);
+    tier(EXPORT_MAJOR_GRID_MM, 0.15, 1);
     parts.push(`</g>`);
     return parts.join("\n");
   }
 
+  // Dimension lines only — no text on the drawing itself; every value and
+  // label lives in svgTechTable() instead, to keep the printed scene clean.
   function svgDimensions(m, docX, docY, scaleFactor, color) {
     const parts = [`<g stroke="${color}" fill="${color}" font-size="3" stroke-width="0.2">`];
 
-    function hDim(xCenter, yCenter, halfWidth, offset, label) {
-      const y = docY(yCenter - offset);
-      const x1 = docX(xCenter - halfWidth);
-      const x2 = docX(xCenter + halfWidth);
-      parts.push(`<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}"/>`);
-      parts.push(`<line x1="${x1}" y1="${y - 1.5}" x2="${x1}" y2="${y + 1.5}"/>`);
-      parts.push(`<line x1="${x2}" y1="${y - 1.5}" x2="${x2}" y2="${y + 1.5}"/>`);
-      parts.push(`<text x="${(x1 + x2) / 2}" y="${y + 4.5}" text-anchor="middle">${escapeXml(label)}</text>`);
-    }
-
-    function pDim(x1Mm, y1Mm, x2Mm, y2Mm, label) {
+    function pDim(x1Mm, y1Mm, x2Mm, y2Mm) {
       const px1 = docX(x1Mm), py1 = docY(y1Mm), px2 = docX(x2Mm), py2 = docY(y2Mm);
       parts.push(`<line x1="${px1}" y1="${py1}" x2="${px2}" y2="${py2}"/>`);
       parts.push(`<circle cx="${px1}" cy="${py1}" r="0.8"/>`);
-      parts.push(`<text x="${(px1 + px2) / 2 + 2}" y="${(py1 + py2) / 2 - 1.5}">${escapeXml(label)}</text>`);
     }
 
-    hDim(0, 0, m.outerRadius, m.outerRadius + 6, `⌀ butelki = ${(m.outerRadius * 2).toFixed(0)} mm`);
     if (m.lens) {
-      hDim(m.lens.centerXMm, m.lens.centerYMm, m.lens.radiusMm, m.lens.radiusMm + 6, `⌀ soczewki = ${m.lens.diameterMm.toFixed(0)} mm`);
-      pDim(0, 0, m.lens.centerXMm, m.lens.centerYMm, `${Math.hypot(m.lens.centerXMm, m.lens.centerYMm).toFixed(0)} mm`);
+      pDim(0, 0, m.lens.centerXMm, m.lens.centerYMm);
     }
     if (m.source) {
-      pDim(0, 0, m.source.xMm, m.source.yMm, `${Math.hypot(m.source.xMm, m.source.yMm).toFixed(0)} mm, θ=${m.centralAngleDeg.toFixed(0)}°`);
-    }
-    if (m.source && m.spreadDeg) {
-      parts.push(`<text x="${docX(m.source.xMm)}" y="${docY(m.source.yMm) - 4}">rozwarcie = ${m.spreadDeg.toFixed(0)}°</text>`);
+      pDim(0, 0, m.source.xMm, m.source.yMm);
     }
 
     parts.push(`</g>`);
     return parts.join("\n");
   }
 
-  function svgCalibration(pageW, pageH, scaleFactor, pageSize, orientation, oversizeFit) {
-    const size = 100; // mm — fixed regardless of world scale: this checks the PRINTER, not the model
+  // Small technical table (corner of the print) holding every value that used
+  // to be written directly on the drawing as long labels.
+  function svgTechTable(m, pageW, color) {
+    const lensSourceGapMm =
+      m.source && m.lens
+        ? Math.hypot(m.source.xMm - m.lens.centerXMm, m.source.yMm - m.lens.centerYMm) - m.lens.radiusMm
+        : null;
+    const bottleLensGapMm = m.lens ? Math.hypot(m.lens.centerXMm, m.lens.centerYMm) - m.outerRadius - m.lens.radiusMm : null;
+    const sourceAngleDeg = m.source ? (Math.atan2(m.source.yMm, m.source.xMm) * 180) / Math.PI : null;
+    const lensAngleDeg = m.lens ? (Math.atan2(m.lens.centerYMm, m.lens.centerXMm) * 180) / Math.PI : null;
+
+    const rows = [
+      ["Ø butelki", `${(m.outerRadius * 2).toFixed(0)} mm`],
+      ["grubosc scianki", `${(m.outerRadius - m.innerRadius).toFixed(1)} mm`],
+      ["Ø soczewki", m.lens ? `${m.lens.diameterMm.toFixed(0)} mm` : "—"],
+      ["n soczewki", m.lens ? m.lens.n.toFixed(3) : "—"],
+      ["Odleglosc soczewka-LED", lensSourceGapMm !== null ? `${lensSourceGapMm.toFixed(0)} mm` : "—"],
+      ["Odleglosc butelka-soczewka", bottleLensGapMm !== null ? `${bottleLensGapMm.toFixed(0)} mm` : "—"],
+      ["kat zrodla", sourceAngleDeg !== null ? `${sourceAngleDeg.toFixed(0)}°` : "—"],
+      ["kat soczewki", lensAngleDeg !== null ? `${lensAngleDeg.toFixed(0)}°` : "—"],
+      ["lustro", m.mirror ? "aktywne" : "nieaktywne"],
+      ["dlugosc lustra", m.mirror ? `${m.mirror.lengthMm.toFixed(0)} mm` : "—"],
+      ["kat lustra", m.mirror ? `${m.mirror.angleDeg.toFixed(0)}°` : "—"],
+      ["rozwarcie", m.spreadDeg !== null && m.spreadDeg !== undefined ? `${m.spreadDeg.toFixed(0)}°` : "—"],
+      ["liczba promieni", String(m.rayCount)],
+    ];
+
+    const rowHeight = 4;
+    const width = 60;
+    const startX = pageW - EXPORT_MARGIN_MM - width;
+    const startY = EXPORT_MARGIN_MM + 4;
+
+    const parts = [
+      `<rect x="${startX - 2}" y="${startY - 4}" width="${width + 2}" height="${rows.length * rowHeight + 4}" fill="#ffffff" fill-opacity="0.85" stroke="${color}" stroke-width="0.15"/>`,
+      `<g font-size="2.6" fill="${color}">`,
+    ];
+    rows.forEach(([label, value], i) => {
+      const y = startY + i * rowHeight;
+      parts.push(`<text x="${startX}" y="${y}">${escapeXml(label)}</text>`);
+      parts.push(`<text x="${startX + width}" y="${y}" text-anchor="end">${escapeXml(value)}</text>`);
+    });
+    parts.push(`</g>`);
+    return parts.join("\n");
+  }
+
+  function svgCalibration(pageW, pageH) {
+    const size = 50; // mm — fixed regardless of world scale: this checks the PRINTER, not the model
     const x = 8;
-    const y = pageH - size - 24;
-    const scaleLabel = scaleFactor === 1 ? "1:1" : scaleFactor === 2 ? "2:1" : "1:2";
+    const y = pageH - 16;
     return `
       <g stroke="#000000" fill="none" stroke-width="0.3">
-        <rect x="${x}" y="${y}" width="${size}" height="${size}"/>
-        <line x1="${x}" y1="${y + size + 8}" x2="${x + size}" y2="${y + size + 8}"/>
-        <line x1="${x}" y1="${y + size + 6}" x2="${x}" y2="${y + size + 10}"/>
-        <line x1="${x + size}" y1="${y + size + 6}" x2="${x + size}" y2="${y + size + 10}"/>
+        <line x1="${x}" y1="${y}" x2="${x + size}" y2="${y}"/>
+        <line x1="${x}" y1="${y - 2}" x2="${x}" y2="${y + 2}"/>
+        <line x1="${x + size}" y1="${y - 2}" x2="${x + size}" y2="${y + 2}"/>
       </g>
-      <text x="${x}" y="${y + size + 14}" font-size="3" fill="#000000">Po wydrukowaniu bok kwadratu i ten odcinek powinny mieć dokładnie 100 mm.</text>
-      <text x="${x}" y="${y + size + 18.5}" font-size="3" fill="#000000">Drukuj w skali 100% / Rzeczywisty rozmiar. Wyłącz opcję "Dopasuj do strony".</text>
-      <text x="${x}" y="${y + size + 23}" font-size="3" fill="#000000">Skala: ${scaleLabel} (1 mm świata = ${scaleFactor.toFixed(2)} mm dokumentu). Format: ${pageSize} ${orientation === "landscape" ? "poziomo" : "pionowo"}${oversizeFit ? " (dopasowany)" : ""}.</text>
+      <text x="${x}" y="${y + 5}" font-size="3" fill="#000000">50 mm</text>
     `;
   }
 
@@ -1056,7 +1538,7 @@
   // (at the chosen scale) so the UI can warn instead of silently rescaling.
   function buildSceneSvg(options) {
     const m = getSceneModel();
-    const bbox = computeContentBBoxMm(m, options.showRays);
+    const bbox = computeContentBBoxMm(m, options.showRays, options.showReflected);
     const scaleFactor = options.scaleFactor;
 
     let pageW, pageH;
@@ -1106,8 +1588,10 @@
     const c = currentColors();
     const strokeBottle = colorMode ? c.bottle : "#000000";
     const strokeLens = colorMode ? c.lens : "#000000";
+    const strokeMirror = colorMode ? c.mirror : "#000000";
     const strokeIncident = colorMode ? c.incident : "#000000";
     const strokeRefracted = colorMode ? c.refracted : "#000000";
+    const strokeReflected = colorMode ? c.reflected : "#000000";
     const strokeGrid = colorMode ? c.grid : "#999999";
     const fillSource = colorMode ? c.source : "#000000";
 
@@ -1130,29 +1614,49 @@
       );
     }
 
+    if (m.mirror) {
+      parts.push(
+        `<line x1="${docX(m.mirror.p1.x)}" y1="${docY(m.mirror.p1.y)}" x2="${docX(m.mirror.p2.x)}" y2="${docY(m.mirror.p2.y)}" stroke="${strokeMirror}" stroke-width="0.8"/>`
+      );
+    }
+
     if (m.source) {
       parts.push(`<circle cx="${docX(m.source.xMm)}" cy="${docY(m.source.yMm)}" r="1.2" fill="${fillSource}"/>`);
     }
+
+    const alphas = currentAlphas();
 
     if (options.showRays && lastResult) {
       for (const ray of lastResult.rays) {
         const pts = ray.points;
         if (pts.length >= 2) {
           const seg = `${docX(pts[0][0])},${docY(pts[0][1])} ${docX(pts[1][0])},${docY(pts[1][1])}`;
-          parts.push(`<polyline points="${seg}" fill="none" stroke="${strokeIncident}" stroke-width="0.25"/>`);
+          parts.push(`<polyline points="${seg}" fill="none" stroke="${strokeIncident}" stroke-width="0.25" opacity="${alphas.incident}"/>`);
         }
         if (pts.length > 2) {
           const rest = pts.slice(1).map(([x, y]) => `${docX(x)},${docY(y)}`).join(" ");
-          parts.push(`<polyline points="${rest}" fill="none" stroke="${strokeRefracted}" stroke-width="0.25"/>`);
+          parts.push(`<polyline points="${rest}" fill="none" stroke="${strokeRefracted}" stroke-width="0.25" opacity="${alphas.refracted}"/>`);
+        }
+      }
+    }
+
+    if (options.showReflected && lastResult) {
+      for (const ray of lastResult.rays) {
+        for (const segment of ray.reflected) {
+          const pts = segment.points.map(([x, y]) => `${docX(x)},${docY(y)}`).join(" ");
+          parts.push(
+            `<polyline points="${pts}" fill="none" stroke="${strokeReflected}" stroke-width="0.25" stroke-dasharray="1.5,1" opacity="${alphas.reflected}"/>`
+          );
         }
       }
     }
 
     if (options.showDimensions) {
       parts.push(svgDimensions(m, docX, docY, scaleFactor, "#555555"));
+      parts.push(svgTechTable(m, pageW, "#555555"));
     }
 
-    parts.push(svgCalibration(pageW, pageH, scaleFactor, options.pageSize, options.orientation, options.oversizeFit));
+    parts.push(svgCalibration(pageW, pageH));
     parts.push(`</svg>`);
 
     return { svg: parts.join("\n"), fits, pageW, pageH };
@@ -1167,6 +1671,7 @@
       customPosMm: { x: Number(exportPosX.value) || 0, y: Number(exportPosY.value) || 0 },
       showGrid: exportShowGrid.checked,
       showRays: exportShowRays.checked,
+      showReflected: exportShowReflected.checked,
       showDimensions: exportShowDimensions.checked,
       colorMode: exportShowColors.checked,
       oversizeFit: Boolean(oversizeFit),
@@ -1186,6 +1691,7 @@
   openExportBtn.addEventListener("click", () => {
     // seed from the current on-screen toggles so the export starts consistent with what's visible
     exportShowGrid.checked = showGridCheckbox.checked;
+    exportShowReflected.checked = showReflectedRays;
     exportShowDimensions.checked = showDimensionsCheckbox.checked;
     refreshExportWarning();
     exportDialog.showModal();
@@ -1196,7 +1702,7 @@
     refreshExportWarning();
   });
 
-  [exportPageSize, exportOrientation, exportScale, exportShowGrid, exportShowRays, exportShowDimensions, exportPosX, exportPosY].forEach(
+  [exportPageSize, exportOrientation, exportScale, exportShowGrid, exportShowRays, exportShowReflected, exportShowDimensions, exportPosX, exportPosY].forEach(
     (el) => {
       el.addEventListener("input", refreshExportWarning);
       el.addEventListener("change", refreshExportWarning);
@@ -1228,7 +1734,8 @@
   let dynamicPrintStyle = null;
 
   function openPrintView() {
-    const { svg, pageW, pageH } = buildSceneSvg(currentExportOptions(false));
+    const options = currentExportOptions(false);
+    const { svg } = buildSceneSvg(options);
     printViewContent.innerHTML = svg;
 
     if (!dynamicPrintStyle) {
@@ -1236,15 +1743,46 @@
       dynamicPrintStyle.id = "dynamic-print-style";
       document.head.appendChild(dynamicPrintStyle);
     }
-    dynamicPrintStyle.textContent = `@page { size: ${pageW}mm ${pageH}mm; margin: 0; }`;
+    // Named CSS page sizes (not numeric mm): Chrome maps `size: A4 landscape`
+    // etc. straight to its "A4"/"A3" print-dialog option. A numeric
+    // `size: 297mm 210mm` instead shows up as "Custom" and can fail to print
+    // or save as PDF in some Chrome versions.
+    dynamicPrintStyle.textContent = `@page { size: ${options.pageSize} ${options.orientation}; margin: 0; }`;
 
     printView.classList.remove("hidden");
     exportDialog.close();
   }
 
   exportPrintViewBtn.addEventListener("click", openPrintView);
-  printNowBtn.addEventListener("click", () => window.print());
+  printNowBtn.addEventListener("click", () => {
+    // Give the browser two paint frames to finish laying out the just-injected
+    // SVG before invoking the print dialog, so it isn't racing an empty page.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => window.print());
+    });
+  });
   printCloseBtn.addEventListener("click", () => printView.classList.add("hidden"));
+
+  // --- "Pobierz PDF": renders the same SVG straight into a real PDF page via
+  // jsPDF + svg2pdf.js — no system print dialog, no canvas screenshot, and no
+  // rescaling: the SVG's own mm-based width/height (already computed for the
+  // chosen page format/orientation) is passed through unchanged.
+  exportDownloadPdfBtn.addEventListener("click", async () => {
+    const options = currentExportOptions(false);
+    const { svg, pageW, pageH } = buildSceneSvg(options);
+
+    const svgElement = new DOMParser().parseFromString(svg, "image/svg+xml").documentElement;
+
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({
+      orientation: options.orientation,
+      unit: "mm",
+      format: options.pageSize.toLowerCase(),
+    });
+
+    await pdf.svg(svgElement, { x: 0, y: 0, width: pageW, height: pageH });
+    pdf.save("bottle-simulation-1to1.pdf");
+  });
 
   // Resizing the viewport (window resize, toolbar collapsing/expanding, a
   // <details> section opening) only needs to re-render the cached rays at
