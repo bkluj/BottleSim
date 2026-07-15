@@ -589,8 +589,79 @@
       drawGrid(scale, originX, originY, cssWidth, cssHeight, colors);
     }
 
-    // bottle circles — lightened: thin translucent glass fill so contours and
-    // rays passing through stay clearly legible
+    // layering (back to front): grid, reflected rays, incident/refracted rays,
+    // then contours (bottle/lens/mirror/source) always drawn last so they stay
+    // crisply on top of every ray
+    const dense = rays.length > 60;
+    const alphas = currentAlphas();
+
+    // reflected rays — drawn first (bottom-most ray layer) so incident/refracted
+    // rays and the contours above always read clearly over them
+    if (showReflectedRays) {
+      ctx.strokeStyle = colors.reflected;
+      ctx.lineWidth = dense ? 1 : 1.25;
+      ctx.globalAlpha = (dense ? 0.45 : 0.75) * alphas.reflected;
+      ctx.setLineDash([6, 4]);
+      for (const ray of rays) {
+        for (const segment of ray.reflected) {
+          ctx.beginPath();
+          segment.points.forEach(([x, y], i) => {
+            const [px, py] = toCanvas(x, y);
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          });
+          ctx.stroke();
+        }
+      }
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
+
+    // rays — dense beams skip per-vertex markers and thin out for readability.
+    // First segment (source to first hit) is drawn as "incident", the rest of
+    // the transmitted path as "refracted" — a simple visual split, not a new
+    // physical concept: the geometry itself is untouched.
+    ctx.lineWidth = dense ? 1 : 1.5;
+
+    for (const ray of rays) {
+      const pts = ray.points;
+
+      ctx.strokeStyle = colors.incident;
+      ctx.globalAlpha = (dense ? 0.55 : 1) * alphas.incident;
+      ctx.beginPath();
+      const [ix0, iy0] = toCanvas(pts[0][0], pts[0][1]);
+      ctx.moveTo(ix0, iy0);
+      const [ix1, iy1] = toCanvas(pts[Math.min(1, pts.length - 1)][0], pts[Math.min(1, pts.length - 1)][1]);
+      ctx.lineTo(ix1, iy1);
+      ctx.stroke();
+
+      if (pts.length > 2) {
+        ctx.strokeStyle = colors.refracted;
+        ctx.globalAlpha = (dense ? 0.55 : 1) * alphas.refracted;
+        ctx.beginPath();
+        pts.slice(1).forEach(([x, y], i) => {
+          const [px, py] = toCanvas(x, y);
+          if (i === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        });
+        ctx.stroke();
+      }
+
+      if (!dense) {
+        ctx.fillStyle = colors.refracted;
+        ctx.globalAlpha = alphas.refracted;
+        for (const [x, y] of pts) {
+          const [px, py] = toCanvas(x, y);
+          ctx.beginPath();
+          ctx.arc(px, py, 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+    ctx.globalAlpha = 1;
+
+    // bottle circles — drawn on top of the rays so contours stay crisp; thin
+    // translucent glass fill keeps rays passing through still legible
     const [bcx, bcy] = toCanvas(0, 0);
     ctx.strokeStyle = colors.bottle;
     ctx.lineWidth = 2;
@@ -660,73 +731,6 @@
         ctx.lineTo(px + nx * tickLenPx, py - ny * tickLenPx);
         ctx.stroke();
       }
-    }
-
-    // rays — dense beams skip per-vertex markers and thin out for readability.
-    // First segment (source to first hit) is drawn as "incident", the rest of
-    // the transmitted path as "refracted" — a simple visual split, not a new
-    // physical concept: the geometry itself is untouched.
-    const dense = rays.length > 60;
-    const alphas = currentAlphas();
-    ctx.lineWidth = dense ? 1 : 1.5;
-
-    for (const ray of rays) {
-      const pts = ray.points;
-
-      ctx.strokeStyle = colors.incident;
-      ctx.globalAlpha = (dense ? 0.55 : 1) * alphas.incident;
-      ctx.beginPath();
-      const [ix0, iy0] = toCanvas(pts[0][0], pts[0][1]);
-      ctx.moveTo(ix0, iy0);
-      const [ix1, iy1] = toCanvas(pts[Math.min(1, pts.length - 1)][0], pts[Math.min(1, pts.length - 1)][1]);
-      ctx.lineTo(ix1, iy1);
-      ctx.stroke();
-
-      if (pts.length > 2) {
-        ctx.strokeStyle = colors.refracted;
-        ctx.globalAlpha = (dense ? 0.55 : 1) * alphas.refracted;
-        ctx.beginPath();
-        pts.slice(1).forEach(([x, y], i) => {
-          const [px, py] = toCanvas(x, y);
-          if (i === 0) ctx.moveTo(px, py);
-          else ctx.lineTo(px, py);
-        });
-        ctx.stroke();
-      }
-
-      if (!dense) {
-        ctx.fillStyle = colors.refracted;
-        ctx.globalAlpha = alphas.refracted;
-        for (const [x, y] of pts) {
-          const [px, py] = toCanvas(x, y);
-          ctx.beginPath();
-          ctx.arc(px, py, 2, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-    }
-    ctx.globalAlpha = 1;
-
-    // reflected rays — geometric direction only, rendering is purely local (no refetch);
-    // the transform above never depends on ray/reflected data, so toggling can't shift the view
-    if (showReflectedRays) {
-      ctx.strokeStyle = colors.reflected;
-      ctx.lineWidth = dense ? 1 : 1.25;
-      ctx.globalAlpha = (dense ? 0.45 : 0.75) * alphas.reflected;
-      ctx.setLineDash([6, 4]);
-      for (const ray of rays) {
-        for (const segment of ray.reflected) {
-          ctx.beginPath();
-          segment.points.forEach(([x, y], i) => {
-            const [px, py] = toCanvas(x, y);
-            if (i === 0) ctx.moveTo(px, py);
-            else ctx.lineTo(px, py);
-          });
-          ctx.stroke();
-        }
-      }
-      ctx.setLineDash([]);
-      ctx.globalAlpha = 1;
     }
 
     // point light source marker
@@ -1457,20 +1461,6 @@
   // label lives in svgTechTable() instead, to keep the printed scene clean.
   function svgDimensions(m, docX, docY, scaleFactor, color) {
     const parts = [`<g stroke="${color}" fill="${color}" font-size="3" stroke-width="0.2">`];
-
-    function pDim(x1Mm, y1Mm, x2Mm, y2Mm) {
-      const px1 = docX(x1Mm), py1 = docY(y1Mm), px2 = docX(x2Mm), py2 = docY(y2Mm);
-      parts.push(`<line x1="${px1}" y1="${py1}" x2="${px2}" y2="${py2}"/>`);
-      parts.push(`<circle cx="${px1}" cy="${py1}" r="0.8"/>`);
-    }
-
-    if (m.lens) {
-      pDim(0, 0, m.lens.centerXMm, m.lens.centerYMm);
-    }
-    if (m.source) {
-      pDim(0, 0, m.source.xMm, m.source.yMm);
-    }
-
     parts.push(`</g>`);
     return parts.join("\n");
   }
@@ -1605,6 +1595,35 @@
       parts.push(svgGrid(offsetX, offsetY, scaleFactor, strokeGrid, pageW, pageH));
     }
 
+    const alphas = currentAlphas();
+
+    // layering (back to front): reflected rays, incident/refracted rays, then
+    // contours (bottle/lens/mirror/source) drawn last so they stay on top
+    if (options.showReflected && lastResult) {
+      for (const ray of lastResult.rays) {
+        for (const segment of ray.reflected) {
+          const pts = segment.points.map(([x, y]) => `${docX(x)},${docY(y)}`).join(" ");
+          parts.push(
+            `<polyline points="${pts}" fill="none" stroke="${strokeReflected}" stroke-width="0.25" stroke-dasharray="1.5,1" opacity="${alphas.reflected}"/>`
+          );
+        }
+      }
+    }
+
+    if (options.showRays && lastResult) {
+      for (const ray of lastResult.rays) {
+        const pts = ray.points;
+        if (pts.length >= 2) {
+          const seg = `${docX(pts[0][0])},${docY(pts[0][1])} ${docX(pts[1][0])},${docY(pts[1][1])}`;
+          parts.push(`<polyline points="${seg}" fill="none" stroke="${strokeIncident}" stroke-width="0.25" opacity="${alphas.incident}"/>`);
+        }
+        if (pts.length > 2) {
+          const rest = pts.slice(1).map(([x, y]) => `${docX(x)},${docY(y)}`).join(" ");
+          parts.push(`<polyline points="${rest}" fill="none" stroke="${strokeRefracted}" stroke-width="0.25" opacity="${alphas.refracted}"/>`);
+        }
+      }
+    }
+
     parts.push(`<circle cx="${docX(0)}" cy="${docY(0)}" r="${m.outerRadius * scaleFactor}" fill="none" stroke="${strokeBottle}" stroke-width="0.3"/>`);
     parts.push(`<circle cx="${docX(0)}" cy="${docY(0)}" r="${m.innerRadius * scaleFactor}" fill="none" stroke="${strokeBottle}" stroke-width="0.3"/>`);
 
@@ -1622,33 +1641,6 @@
 
     if (m.source) {
       parts.push(`<circle cx="${docX(m.source.xMm)}" cy="${docY(m.source.yMm)}" r="1.2" fill="${fillSource}"/>`);
-    }
-
-    const alphas = currentAlphas();
-
-    if (options.showRays && lastResult) {
-      for (const ray of lastResult.rays) {
-        const pts = ray.points;
-        if (pts.length >= 2) {
-          const seg = `${docX(pts[0][0])},${docY(pts[0][1])} ${docX(pts[1][0])},${docY(pts[1][1])}`;
-          parts.push(`<polyline points="${seg}" fill="none" stroke="${strokeIncident}" stroke-width="0.25" opacity="${alphas.incident}"/>`);
-        }
-        if (pts.length > 2) {
-          const rest = pts.slice(1).map(([x, y]) => `${docX(x)},${docY(y)}`).join(" ");
-          parts.push(`<polyline points="${rest}" fill="none" stroke="${strokeRefracted}" stroke-width="0.25" opacity="${alphas.refracted}"/>`);
-        }
-      }
-    }
-
-    if (options.showReflected && lastResult) {
-      for (const ray of lastResult.rays) {
-        for (const segment of ray.reflected) {
-          const pts = segment.points.map(([x, y]) => `${docX(x)},${docY(y)}`).join(" ");
-          parts.push(
-            `<polyline points="${pts}" fill="none" stroke="${strokeReflected}" stroke-width="0.25" stroke-dasharray="1.5,1" opacity="${alphas.reflected}"/>`
-          );
-        }
-      }
     }
 
     if (options.showDimensions) {
