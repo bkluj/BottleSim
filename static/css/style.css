@@ -566,28 +566,66 @@ canvas.dragging-source {
 }
 
 @media print {
-  .top-toolbar,
-  .simulation-container,
-  .scene-inspector,
-  .grid-note,
-  .status,
-  .export-dialog,
-  .print-view-toolbar {
+  @page {
+    size: var(--print-page-w, 297mm) var(--print-page-h, 210mm);
+    margin: 0;
+  }
+
+  html,
+  body {
+    width: var(--print-page-w, 297mm) !important;
+    height: var(--print-page-h, 210mm) !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+  }
+
+  /* Hard print-only mode: hide every top-level child except the print view,
+     so nothing else can contribute a second (blank) page. */
+  body.printing > * {
     display: none !important;
   }
 
-  .print-view {
-    position: static;
-    overflow: visible;
+  body.printing #print-view {
+    display: block !important;
   }
 
-  .print-view-content {
-    padding: 0;
-    display: block;
+  body.printing #print-view,
+  body.printing #print-view-content {
+    position: fixed !important;
+    inset: 0 !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: var(--print-page-w, 297mm) !important;
+    height: var(--print-page-h, 210mm) !important;
+    max-width: var(--print-page-w, 297mm) !important;
+    max-height: var(--print-page-h, 210mm) !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    gap: 0 !important;
+    overflow: hidden !important;
+    page-break-before: avoid !important;
+    page-break-after: avoid !important;
+    break-before: avoid !important;
+    break-after: avoid !important;
   }
 
-  body, .app, .simulation-container {
-    height: auto !important;
-    overflow: visible !important;
+  body.printing #print-view-content svg {
+    display: block !important;
+    width: var(--print-page-w, 297mm) !important;
+    height: var(--print-page-h, 210mm) !important;
+    max-width: var(--print-page-w, 297mm) !important;
+    max-height: var(--print-page-h, 210mm) !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    overflow: hidden !important;
+  }
+
+  body.printing #print-view * {
+    box-sizing: border-box !important;
   }
 }

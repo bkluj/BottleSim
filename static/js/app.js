@@ -1738,8 +1738,13 @@
     // Named CSS page sizes (not numeric mm): Chrome maps `size: A4 landscape`
     // etc. straight to its "A4"/"A3" print-dialog option. A numeric
     // `size: 297mm 210mm` instead shows up as "Custom" and can fail to print
-    // or save as PDF in some Chrome versions.
-    dynamicPrintStyle.textContent = `@page { size: ${options.pageSize} ${options.orientation}; margin: 0; }`;
+    // or save as PDF in some Chrome versions. The --print-page-w/h vars drive
+    // the hard print-only layout in style.css so it always matches this size,
+    // regardless of orientation/page format chosen in the export dialog.
+    const [pageW, pageH] = pageDimsMm(options.pageSize, options.orientation);
+    dynamicPrintStyle.textContent =
+      `@page { size: ${options.pageSize} ${options.orientation}; margin: 0; }\n` +
+      `:root { --print-page-w: ${pageW}mm; --print-page-h: ${pageH}mm; }`;
 
     printView.classList.remove("hidden");
     exportDialog.close();
@@ -1747,13 +1752,20 @@
 
   exportPrintViewBtn.addEventListener("click", openPrintView);
   printNowBtn.addEventListener("click", () => {
+    document.body.classList.add("printing");
     // Give the browser two paint frames to finish laying out the just-injected
     // SVG before invoking the print dialog, so it isn't racing an empty page.
     requestAnimationFrame(() => {
       requestAnimationFrame(() => window.print());
     });
   });
-  printCloseBtn.addEventListener("click", () => printView.classList.add("hidden"));
+  window.addEventListener("afterprint", () => {
+    document.body.classList.remove("printing");
+  });
+  printCloseBtn.addEventListener("click", () => {
+    document.body.classList.remove("printing");
+    printView.classList.add("hidden");
+  });
 
   // --- "Pobierz PDF": renders the same SVG straight into a real PDF page via
   // jsPDF + svg2pdf.js — no system print dialog, no canvas screenshot, and no
